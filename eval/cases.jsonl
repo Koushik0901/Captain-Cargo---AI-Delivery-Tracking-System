@@ -1,0 +1,53 @@
+[
+  {
+    "timestamp": "2024-01-15T10:00:00Z",
+    "correlation_id": "abc123def456",
+    "transcript": "Where is my package with tracking number ABC123?",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_delivery_status",
+          "arguments": {
+            "tracking_id": "ABC123"
+          }
+        }
+      }
+    ],
+    "expected_status": "success",
+    "expected_tracking_id": "ABC123"
+  },
+  {
+    "timestamp": "2024-01-15T10:05:00Z",
+    "correlation_id": "def456ghi789",
+    "transcript": "Can you check on order XYZ789 for me?",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_delivery_status",
+          "arguments": {
+            "tracking_id": "XYZ789"
+          }
+        }
+      }
+    ],
+    "expected_status": "not_found",
+    "expected_tracking_id": "XYZ789"
+  },
+  {
+    "timestamp": "2024-01-15T10:10:00Z",
+    "correlation_id": "ghi789jkl012",
+    "transcript": "What's the status of package DEL456?",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_delivery_status",
+          "arguments": {
+            "tracking_id": "DEL456"
+          }
+        }
+      }
+    ],
+    "expected_status": "success",
+    "expected_tracking_id": "DEL456"
+  }
+]

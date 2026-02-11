@@ -1,50 +1,149 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+SYNC IMPACT REPORT
+==================
+Version change: N/A → 1.0.0 (initial creation)
+
+Modified principles: N/A (new constitution)
+Added sections:
+- 7 Core Principles (Deterministic Tool Contracts, Reliability, Latency Discipline,
+  Hallucination Control, Observability, Evaluation Harness, Deploy Hardening)
+- Additional Constraints (Performance Standards, Technology Stack)
+- Development Workflow
+
+Removed sections: N/A
+
+Templates requiring updates:
+- .specify/templates/plan-template.md ✅ aligned (Constitution Check references constitution)
+- .specify/templates/spec-template.md ✅ aligned (User stories + requirements sections)
+- .specify/templates/tasks-template.md ✅ aligned (testable, independently deliverable tasks)
+
+Follow-up TODOs: None
+-->
+
+# Captain Cargo Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Deterministic Tool Contracts (NON-NEGOTIABLE)
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All Vapi tool calls MUST use strict Pydantic input/output schemas. Every tool MUST define:
+- Explicit parameter types with validation rules
+- Structured response formats with status indicators
+- Clear error response contracts
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+Tool calls must be deterministic: same inputs always produce same structured outputs.
+Rationale: Voice agents require predictable tool behavior for reliable user experiences.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### II. Reliability (NON-NEGOTIABLE)
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+All external calls MUST implement:
+- Retry with exponential backoff for transient failures
+- Configurable timeouts (5s default for synchronous tool calls)
+- Idempotency where applicable
+- Graceful fallback responses when upstream services fail
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Critical paths must handle partial failures without cascading to user-visible errors.
+Rationale: Voice calls cannot recover from dropped requests; users hang up on errors.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### III. Latency Discipline (NON-NEGOTIABLE)
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Status lookups MUST implement:
+- In-memory caching with configurable TTL (60s default for delivery status)
+- Time budgets per request component (Vapi → webhook ≤ 500ms)
+- Clear degradation when upstream is slow (return cached stale data if configured)
+- No blocking I/O in async code paths
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+Rationale: Voice agents require sub-second response times; latency destroys user trust.
+
+### IV. Hallucination Control (NON-NEGOTIABLE)
+
+Agent responses MUST be derived only from verified tool outputs:
+- If tool succeeds: respond with tool-verified data only
+- If tool fails: transparently communicate failure to user, do not fabricate
+- No speculative information in response text
+- Fallback responses must clearly state limitations
+
+Rationale: Voice agents making up delivery information cause real-world user harm.
+
+### V. Observability (NON-NEGOTIABLE)
+
+All operations MUST emit structured telemetry:
+- Correlation IDs trace requests end-to-end
+- Structured JSON logs at appropriate levels (DEBUG, INFO, WARNING, ERROR)
+- Basic metrics: latency p50/p95/p99, error rate, cache hit ratio
+- Health endpoint for liveness/readiness checks
+
+Rationale: Production voice agents require immediate debugging during live calls.
+
+### VI. Evaluation Harness (NON-NEGOTIABLE)
+
+Must support replay-based evaluation:
+- Transcript/utterance replay capability for all Vapi interactions
+- Automated scoring: accuracy, tool success rate, latency percentiles
+- Regression detection for tool call success rates
+- Test fixtures for common delivery scenarios
+
+Rationale: Voice agent quality degrades silently without automated evaluation.
+
+### VII. Deploy Hardening (NON-NEGOTIABLE)
+
+Production deployments MUST:
+- Validate required environment variables at startup (fail fast)
+- Health endpoints for Kubernetes/liveness probes
+- Graceful shutdown handling
+- Default to safe, conservative configurations
+- Feature flags for experimental changes
+
+Rationale: Voice agents have zero tolerance for deployment-related downtime.
+
+## Additional Constraints
+
+### Performance Standards
+
+- P95 latency budget: 800ms total (Vapi → webhook → response)
+- P99 latency budget: 1500ms (with degradation after 500ms)
+- Cache hit ratio target: ≥ 60% for status lookups
+- Error rate threshold: ≤ 1% for production deployments
+
+### Technology Stack
+
+- Backend: FastAPI with Python 3.9+
+- Voice Platform: Vapi (tool-call pattern)
+- Database: Sanity.io (structured content)
+- Deployment: AWS App Runner or equivalent container platform
+- All credentials via environment variables (no hardcoded secrets)
+
+### Security Requirements
+
+- Never expose API tokens in logs or error messages
+- Parameterized queries only (no f-string concatenation in GROQ queries)
+- HTTPS required for all production endpoints
+- Read-only Sanity tokens for delivery tracking
+
+## Development Workflow
+
+All changes MUST:
+1. Pass constitution validation before code review
+2. Include tests for new tool contracts (contract tests required)
+3. Document latency/performance impact for user-facing changes
+4. Include rollback procedure for production deployments
+5. Update observability dashboards for new metrics
+
+Code review MUST verify:
+- Tool schemas are deterministic and versioned
+- Error handling follows fallback patterns
+- Latency requirements are met or justified
+- Observability logging is present and appropriate
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other development practices in this repository. All PRs and reviews MUST verify compliance with these principles. Complexity MUST be justified against voice-agent quality requirements.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+Amendments require:
+1. Documentation of proposed changes with rationale
+2. Migration plan for existing deployments
+3. Review and approval from project maintainers
+
+Refer to `AGENTS.md` for runtime development guidance.
+
+**Version**: 1.0.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-11

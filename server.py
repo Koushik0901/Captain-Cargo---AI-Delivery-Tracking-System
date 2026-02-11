@@ -1,172 +1,323 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import Response
-import requests
-import re
+"""Captain Cargo - Production-Grade Voice Agent for Delivery Tracking.
+
+This FastAPI application handles Vapi webhook calls for delivery status inquiries.
+"""
+
+import contextlib
 import json
 import os
+import signal
+import sys
+import time
+from typing import Any, Optional
 
-app = FastAPI()
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
-# --- Environment variables ---
-SANITY_PROJECT_ID = os.getenv("SANITY_PROJECT_ID")
-SANITY_DATASET = os.getenv("SANITY_DATASET")
-SANITY_API_TOKEN = os.getenv("SANITY_API_TOKEN")
+from models.delivery import Delivery
+from models.webhook import WebhookPayload
+from services.cache import DeliveryCache
+from services.response_builder import ResponseBuilder
+from services.sanity_client import SanityClient
+from utils.config import Config, validate_config
+from utils.logger import logger, log_request
+from utils.normalization import normalize_tracking_id
+from middleware.correlation import (
+    correlation_id_ctx,
+    generate_correlation_id,
+    CorrelationMiddleware,
+)
+from endpoints.health import router as health_router
+from endpoints.metrics import router as metrics_router
 
-if not SANITY_API_TOKEN:
-    print("FATAL ERROR: SANITY_API_TOKEN environment variable is not set.")
 
-SANITY_API_URL = f"https://{SANITY_PROJECT_ID}.api.sanity.io/v2021-10-21/data/query/{SANITY_DATASET}"
+def create_app(config: Optional[Config] = None) -> FastAPI:
+    """Create and configure FastAPI application.
 
-# --- Root endpoint ---
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Delivery tracker webhook is running."}
+    Args:
+        config: Optional Config object for testing.
 
-# --- Helper: normalize tracking ID ---
-def normalize_tracking_id(raw_id: str):
-    if not raw_id:
-        return None
-    return re.sub(r"[^A-Za-z0-9]", "", raw_id).upper()
+    Returns:
+        Configured FastAPI app.
+    """
+    if config is None:
+        config = validate_config()
 
-# --- Helper: fetch delivery from Sanity ---
-def fetch_from_sanity(tracking_id: str):
-    normalized_id = normalize_tracking_id(tracking_id)
-    if not normalized_id:
-        return []
+    app = FastAPI(
+        title="Captain Cargo - Voice Agent Delivery Tracking",
+        description="Production-grade Vapi webhook handler for delivery tracking",
+        version="1.0.0",
+    )
 
-    print(f"🔍 Normalized Tracking ID: {normalized_id}")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-    query = f"""*[_type == 'delivery' && trackingNumber == '{normalized_id}']{{
-        "tracking_id": trackingNumber,
-        "status": status,
-        "customerName": customerName,
-        "customerPhone": customerPhone,
-        "estimatedDelivery": estimatedDelivery,
-        "issueMessage": issueMessage
-    }}"""
-    headers = {"Authorization": f"Bearer {SANITY_API_TOKEN}"}
+    app.add_middleware(CorrelationMiddleware)
 
-    try:
-        response = requests.get(SANITY_API_URL, params={"query": query}, headers=headers)
-        response.raise_for_status()
-        result = response.json().get("result", [])
-        print(f"Sanity Result: {result}")
-        return result
-    except requests.exceptions.RequestException as e:
-        print(f"Sanity API request failed: {e}")
-        return []
+    sanity_client = SanityClient(config)
+    delivery_cache = DeliveryCache(ttl_seconds=config.CACHE_TTL)
+    response_builder = ResponseBuilder()
 
-# --- Main webhook handler ---
-@app.post("/webhook")
-async def webhook_handler(request: Request):
-    try:
-        body = await request.json()
-        print("📩 Incoming webhook:", json.dumps(body, indent=2))
+    request_count = 0
+    error_count = 0
 
-        # --- Case 1: VAPI tool-call style ---
-        if body.get("message", {}).get("type") == "tool-calls":
-            tool_calls = body["message"].get("toolCalls", [])
-            tool_outputs = []
+    def get_metrics() -> dict[str, Any]:
+        """Get current metrics."""
+        nonlocal request_count, error_count
+        cache_stats = delivery_cache.get_stats()
+        return {
+            "requests_total": request_count,
+            "errors_total": error_count,
+            "cache_hits_total": cache_stats["hits"],
+            "cache_misses_total": cache_stats["misses"],
+            "cache_size": cache_stats["size"],
+            "cache_hit_rate": cache_stats["hit_rate"],
+        }
 
-            for call in tool_calls:
-                if call.get("type") == "function":
-                    func_name = call["function"]["name"]  # dynamic
-                    tool_call_id = call.get("id")
-                    if not tool_call_id:
-                        continue
+    @app.middleware("http")
+    async def metrics_middleware(request: Request, call_next: Any) -> Response:
+        """Track request metrics."""
+        nonlocal request_count, error_count
+        start_time = time.time()
 
-                    try:
-                        arguments = call["function"].get("arguments", {})
-                        if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
-                        tracking_id = arguments.get("tracking_id")
+        correlation_id = correlation_id_ctx.get()
+        if correlation_id == "N/A":
+            correlation_id = generate_correlation_id()
+            correlation_id_ctx.set(correlation_id)
 
-                        if not tracking_id:
-                            output_data = {"error": "Tracking ID is missing."}
-                        else:
-                            deliveries = fetch_from_sanity(tracking_id)
-                            if not deliveries:
-                                output_data = {
-                                    "status": "not_found",
-                                    "message": f"No delivery found for tracking ID: {tracking_id}"
-                                }
-                            else:
-                                delivery = deliveries[0]
-                                output_data = {
-                                    "status": "success",
-                                    "message": (
-                                        f"I've found your delivery details:\n"
-                                        f"Customer Name: {delivery.get('customerName')}\n"
-                                        f"Phone: {delivery.get('customerPhone')}\n"
-                                        f"Status: {delivery.get('status')}\n"
-                                        + (f"Estimated Delivery: {delivery['estimatedDelivery']}\n" if delivery.get('estimatedDelivery') else "")
-                                        + (f"Issue: {delivery['issueMessage']}" if delivery.get('issueMessage') else "")
-                                    ),
-                                    "deliveryDetails": delivery
-                                }
+        try:
+            response = await call_next(request)
+            request_count += 1
+            latency_ms = (time.time() - start_time) * 1000
+            log_request(
+                logger,
+                correlation_id,
+                f"{request.method} {request.url.path}",
+                latency_ms=latency_ms,
+                status=response.status_code,
+            )
+            return response
+        except Exception as e:
+            error_count += 1
+            logger.error(
+                f"Request failed: {e}", extra={"correlation_id": correlation_id}
+            )
+            raise
 
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": output_data
-                        })
+    @app.get("/")
+    def root() -> dict:
+        """Root endpoint."""
+        return {
+            "status": "ok",
+            "message": "Captain Cargo webhook is running.",
+            "version": "1.0.0",
+        }
 
-                    except Exception as e:
-                        print(f"Error processing tool call {tool_call_id}: {e}")
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": {"error": "Internal server error processing request."}
-                        })
+    @app.get("/healthz")
+    def healthz() -> dict:
+        """Liveness check."""
+        return {"status": "ok"}
 
-            if tool_outputs:
-                assistant_messages = []
-                for t in tool_outputs:
-                    if t["output"].get("message"):
-                        assistant_messages.append({
-                            "role": "assistant",
-                            "content": t["output"]["message"]
-                        })
+    @app.get("/readyz")
+    def readyz() -> dict:
+        """Readiness check."""
+        dep_status = sanity_client.get_dependency_status()
+        return {
+            "status": "ready",
+            "dependencies": dep_status,
+        }
 
-                response_data = {
-                    "toolCallResults": [
-                        {"toolCallId": t["tool_call_id"], "output": t["output"]} for t in tool_outputs
-                    ],
-                    "messages": assistant_messages
-                }
+    @app.get("/metrics")
+    def metrics() -> dict:
+        """Metrics endpoint."""
+        return get_metrics()
 
-                print("✅ Responding to VAPI with:", json.dumps(response_data, indent=2))
-                return Response(content=json.dumps(response_data), media_type="application/json")
+    @app.post("/webhook")
+    async def webhook_handler(request: Request) -> Response:
+        """Handle Vapi webhook calls."""
+        start_time = time.time()
+        correlation_id = correlation_id_ctx.get()
 
-        # --- Case 2: Direct POST with tracking_id (your tool definition sends this) ---
-        if "tracking_id" in body:
-            tracking_id = body["tracking_id"]
-            deliveries = fetch_from_sanity(tracking_id)
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.error(
+                f"Failed to parse webhook body: {e}",
+                extra={"correlation_id": correlation_id},
+            )
+            return JSONResponse(
+                content={"status": "error", "message": "Invalid request body"},
+                status_code=400,
+            )
 
-            if not deliveries:
-                response_data = {
-                    "status": "not_found",
-                    "message": f"No delivery found for tracking ID: {tracking_id}"
-                }
-            else:
-                delivery = deliveries[0]
-                response_data = {
-                    "status": "success",
-                    "tracking_id": delivery.get("tracking_id"),
-                    "customerName": delivery.get("customerName"),
-                    "customerPhone": delivery.get("customerPhone"),
-                    "statusText": delivery.get("status"),
-                    "estimatedDelivery": delivery.get("estimatedDelivery"),
-                    "issueMessage": delivery.get("issueMessage")
-                }
+        try:
+            WebhookPayload.model_validate(body)
+        except Exception as e:
+            logger.warning(
+                f"Webhook validation failed: {e}",
+                extra={"correlation_id": correlation_id},
+            )
+            return JSONResponse(
+                content={
+                    "status": "error",
+                    "message": "Validation failed",
+                    "details": str(e),
+                },
+                status_code=422,
+            )
 
-            print("✅ Responding to direct request with:", json.dumps(response_data, indent=2))
-            return Response(content=json.dumps(response_data), media_type="application/json")
+        latency_ms = (time.time() - start_time) * 1000
+        log_request(logger, correlation_id, "webhook received", latency_ms=latency_ms)
 
-        # --- If neither format matched ---
-        return Response(
-            content=json.dumps({"status": "ignored", "reason": "Not a relevant request."}),
-            media_type="application/json"
-        )
+        try:
+            response_data = process_webhook(
+                body, sanity_client, delivery_cache, response_builder
+            )
+            latency_ms = (time.time() - start_time) * 1000
+            log_request(
+                logger, correlation_id, "webhook completed", latency_ms=latency_ms
+            )
+            return Response(
+                content=json.dumps(response_data),
+                media_type="application/json",
+            )
+        except Exception as e:
+            logger.error(
+                f"Webhook processing failed: {e}",
+                extra={"correlation_id": correlation_id},
+            )
+            return JSONResponse(
+                content={"status": "error", "message": "Internal server error"},
+                status_code=500,
+            )
 
-    except Exception as e:
-        print(f"CRITICAL Webhook error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+    def process_webhook(
+        body: dict,
+        client: SanityClient,
+        cache: DeliveryCache,
+        builder: ResponseBuilder,
+    ) -> dict:
+        """Process webhook body and return response."""
+        tool_outputs = []
+
+        tool_calls = body.get("message", {}).get("toolCalls", [])
+
+        for call in tool_calls:
+            if call.get("type") != "function":
+                continue
+
+            tool_call_id = call.get("id")
+            if not tool_call_id:
+                continue
+
+            func_name = call.get("function", {}).get("name")
+            arguments = call.get("function", {}).get("arguments", {})
+
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+
+            if func_name == "get_delivery_status":
+                tracking_id = arguments.get("tracking_id", "")
+                try:
+                    normalized_id = normalize_tracking_id(tracking_id)
+                except ValueError as e:
+                    tool_outputs.append(
+                        {
+                            "toolCallId": tool_call_id,
+                            "output": builder.build_error_response(str(e)),
+                        }
+                    )
+                    continue
+
+                cached = cache.get(normalized_id)
+                if cached is not None:
+                    age_seconds = 0
+                    tool_outputs.append(
+                        {
+                            "toolCallId": tool_call_id,
+                            "output": builder.build_cached_fallback(
+                                cached, age_seconds
+                            ),
+                        }
+                    )
+                    continue
+
+                try:
+                    delivery = client.fetch_delivery(normalized_id)
+                    if delivery is None:
+                        tool_outputs.append(
+                            {
+                                "toolCallId": tool_call_id,
+                                "output": builder.build_not_found_response(
+                                    normalized_id
+                                ),
+                            }
+                        )
+                    else:
+                        response = builder.build_success_response(delivery)
+                        cache.set(normalized_id, response.get("delivery_details"))
+                        tool_outputs.append(
+                            {
+                                "toolCallId": tool_call_id,
+                                "output": response,
+                            }
+                        )
+                except Exception:
+                    fallback = builder.build_unavailable_fallback()
+                    tool_outputs.append(
+                        {
+                            "toolCallId": tool_call_id,
+                            "output": fallback,
+                        }
+                    )
+
+        assistant_messages = []
+        for t in tool_outputs:
+            if t["output"].get("message"):
+                assistant_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": t["output"]["message"],
+                    }
+                )
+
+        return {
+            "toolCallResults": [
+                {"toolCallId": t["toolCallId"], "output": t["output"]}
+                for t in tool_outputs
+            ],
+            "messages": assistant_messages,
+        }
+
+    return app
+
+
+def main() -> None:
+    """Run the application."""
+    config = validate_config()
+    app = create_app(config)
+
+    import uvicorn
+
+    def shutdown_handler(signum: Any, frame: Any) -> None:
+        """Handle shutdown signals."""
+        logger.info("Shutting down gracefully...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()
