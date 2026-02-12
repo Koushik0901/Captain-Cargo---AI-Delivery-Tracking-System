@@ -311,6 +311,117 @@ python scripts/eval_replay.py \
 
 See [AGENTS.md](AGENTS.md) for AI agent guidelines.
 
+---
+
+## Demo & Call Flow
+
+### Watch the Demo
+
+**[Demo Video →](https://www.youtube.com/watch?v=dQw4w9WgXcQ)** (60-90s)
+
+Shows: User calls → Agent asks for tracking ID → Tool call → Status response → Backend-down fallback
+
+### Call Flow Diagram
+
+```
+CALLER                          VAPI                        CAPTAIN CARGO                   SANITY
+  │                               │                              │                           │
+  │── Phone call ────────────────>│                              │                           │
+  │                               │                              │                           │
+  │                               │── STT: "Where's my package?" │                           │
+  │                               │                              │                           │
+  │                               │── NLU Intent: track_delivery │                           │
+  │                               │                              │                           │
+  │<── "Sure, what's your tracking number?" ──────────────────────│                           │
+  │                               │                              │                           │
+  │── "ABC123XYZ" ──────────────>│                              │                           │
+  │                               │                              │                           │
+  │                               │── POST /webhook              │                           │
+  │                               │  {trackingId: "ABC123XYZ"}   │                           │
+  │                               │──────────────────────────────>│                           │
+  │                               │                              │                           │
+  │                               │                              │── GROQ Query ────────────>│
+  │                               │                              │                           │
+  │                               │                              │<── Delivery Data ─────────│
+  │                               │                              │                           │
+  │                               │<── {status: "in_transit", ...}───────────────────────────
+  │                               │                              │                           │
+  │<── "Your package ABC123XYZ is in transit..." ─────────────────│                           │
+  │                               │                              │                           │
+  │── "Thanks!" ────────────────>│                              │                           │
+  │                               │                              │                           │
+```
+
+### Fallback Flow (Backend Down)
+
+```
+CALLER                          VAPI                        CAPTAIN CARGO                   SANITY
+  │                               │                              │                           │
+  │── "Where's TRK999?" ────────>│                              │                           │
+  │                               │                              │                           │
+  │                               │── POST /webhook              │                           │
+  │                               │                              │                           │
+  │                               │                              │── Circuit Breaker OPEN ───>│
+  │                               │                              │     (Sanity unreachable)  │
+  │                               │                              │                           │
+  │<── "Having trouble accessing latest data..." ─────────────────│                           │
+  │                               │                              │                           │
+```
+
+---
+
+## Vapi Provider Configuration
+
+Captain Cargo is provider-agnostic. Your webhook handles the business logic while Vapi manages voice/STT/TTS providers. Here's how to configure providers in Vapi:
+
+### Speech-to-Text (STT) Providers
+
+| Provider | Use Case | Configuration |
+|----------|----------|---------------|
+| **Deepgram** | Low latency, high accuracy | Vapi Dashboard → Speech → Deepgram API Key |
+| **AssemblyAI** | Good accuracy, streaming | Vapi Dashboard → Speech → AssemblyAI API Key |
+| **OpenAI Whisper** | High accuracy, slower | Vapi Dashboard → Speech → OpenAI API Key |
+
+### Text-to-Speech (TTS) Providers
+
+| Provider | Use Case | Configuration |
+|----------|----------|---------------|
+| **ElevenLabs** | Natural voices, emotional | Vapi Dashboard → Voice → ElevenLabs API Key |
+| **OpenAI** | Fast, decent quality | Vapi Dashboard → Voice → OpenAI API Key |
+| **Azure** | Enterprise, multiple voices | Vapi Dashboard → Voice → Azure API Key |
+
+### Example: Switching from Deepgram to AssemblyAI
+
+1. Vapi Dashboard → Speech
+2. Select "AssemblyAI" instead of "Deepgram"
+3. Enter AssemblyAI API Key
+4. **No changes needed** to Captain Cargo webhook
+
+### Example: Switching from ElevenLabs to OpenAI TTS
+
+1. Vapi Dashboard → Voice
+2. Select "OpenAI" instead of "ElevenLabs"
+3. Enter OpenAI API Key
+4. **No changes needed** to Captain Cargo webhook
+
+### Why This Architecture?
+
+- **Stable Backend**: Your webhook doesn't change when voice providers change
+- **Vendor Lock-In Prevention**: Easy to switch STT/TTS providers
+- **Cost Optimization**: Switch providers based on pricing/performance
+- **Quality Tuning**: A/B test different providers independently
+
+### Backend Stability Guarantees
+
+Captain Cargo provides:
+
+1. **Circuit Breaker**: Prevents cascade failures during provider outages
+2. **Retry Logic**: 3 attempts with exponential backoff
+3. **Graceful Fallback**: Cached responses when Sanity is slow
+4. **Structured Logging**: Correlation IDs for debugging
+
+These guarantees remain **independent** of Vapi provider choices.
+
 ## License
 
 MIT
