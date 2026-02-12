@@ -1,108 +1,112 @@
-# Captain Cargo - Conversational Delivery Tracking System
+# 🚢 Captain Cargo
 
-A production-grade voice agent for delivery tracking using FastAPI, Vapi (conversational AI), and Sanity.io.
+**The voice agent that actually knows where your package is.**
 
-## Overview
+You know the drill. You call customer support, wait 10 minutes on hold, finally get through, and then... "Could you hold while I check that?" 😤
 
-Captain Cargo enables customers to call in and receive accurate delivery status information through a conversational AI interface. The system handles delivery status queries, issue reporting, and graceful degradation during backend outages.
+Captain Cargo is different. Pick up the phone, ask "Where's my stuff?", and get an answer in milliseconds. No hold music. No sighing. Just your package status.
 
-## Features
+Built with FastAPI + Vapi + Sanity.io. Tested with 75 tests. Deployed and ready to go.
 
-- **Conversational Interface**: Natural language voice queries for delivery status
-- **Production-Grade Reliability**: Circuit breaker, retry logic, and caching
-- **Observability**: Health checks, metrics, and structured logging
-- **Hallucination-Safe**: Verified backend data only in responses
-- **Evaluation Harness**: Transcript replay and accuracy scoring
+---
 
-## Quick Start
+## 🎯 What Does This Do?
 
-### Prerequisites
+Imagine this:
 
-- Python 3.11+
-- Sanity CMS account
+> **You:** "Hey, where's my package?"  
+> **Captain Cargo:** "Your package TRK123456789 is on its way! Expected delivery: tomorrow by 5 PM."  
+> **You:** "Thanks!"  
+> **Captain Cargo:** "You're welcome! 🚚"
 
-### Installation
+That's it. That's the whole interaction. No menus, no "press 1 for...", no "your call is important to us."
+
+---
+
+## ✨ Why Captain Cargo?
+
+| Feature | What It Means For You |
+|---------|----------------------|
+| 🤖 **Conversational** | Talk like a human, get human answers |
+| 🛡️ **Bulletproof** | Circuit breaker, retries, cache — won't crash when your database sneezes |
+| 📊 **Observable** | Health checks, metrics, logs — know what's happening |
+| 🎪 **Hallucination-Safe** | Only tells you what the database actually says |
+| 🧪 **Tested** | 75 tests. Every. Single. One. Passes. |
+
+---
+
+## 🚀 Get It Running
+
+### One-Line Setup
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd captain-cargo
-
-# Install dependencies
+git clone https://github.com/Koushik0901/Captain-Cargo---AI-Delivery-Tracking-System.git
+cd Captain-Cargo---AI-Delivery-Tracking-System
 pip install -r requirements.txt
-
-# Configure environment variables
-cp .env.example .env
-# Edit .env with your Sanity credentials
+cp .env.example .env  # Fill in your Sanity credentials
 ```
 
-### Running the Server
+### Start the Server
 
 ```bash
-# Development
+# For development (auto-reload on changes)
 uvicorn server:app --reload
 
-# Production
+# For production
 python server.py
 ```
 
-The server runs on `http://127.0.0.1:8000`.
+Your webhook will be live at `http://127.0.0.1:8000/webhook` 🎉
 
-## Configuration
+---
 
-### Environment Variables
+## 🔧 Configuration
 
-| Variable | Description | Default | Required |
-|----------|------------|---------|----------|
-| `SANITY_PROJECT_ID` | Sanity CMS project ID | - | Yes |
-| `SANITY_DATASET` | Sanity dataset name | `production` | No |
-| `SANITY_API_TOKEN` | Sanity API read token | - | Yes |
-| `CACHE_TTL` | Cache TTL in seconds | `60` | No |
-| `LOG_LEVEL` | Logging level | `INFO` | No |
-| `RATE_LIMIT` | Requests per minute | `100` | No |
+Captain Cargo needs to know where your data lives. Here's the deal:
 
-### Sanity Schema Requirements
+| Variable | What It Is | Default | Required? |
+|---------|-----------|---------|-----------|
+| `SANITY_PROJECT_ID` | Your Sanity project ID | — | ✅ Yes |
+| `SANITY_DATASET` | Which dataset to query | `production` | ❌ |
+| `SANITY_API_TOKEN` | Read-only API token | — | ✅ Yes |
+| `CACHE_TTL` | How long to cache results (seconds) | `60` | ❌ |
+| `LOG_LEVEL` | DEBUG, INFO, WARNING, ERROR | `INFO` | ❌ |
 
-Your Sanity dataset should include a `delivery` document type with:
+Drop these in your `.env` file and you're golden.
 
-```groq
-*[_type == "delivery"]{
-  trackingNumber,
-  status,
-  customerName,
-  customerPhone,
-  estimatedDelivery,
-  issueMessage
-}
+---
+
+## 📡 API Endpoints
+
+### Health Checks — "Is this thing on?"
+
+```bash
+# Kubernetes liveness probe
+curl http://localhost:8000/healthz
+# → {"status":"ok"}
+
+# Readiness (includes dependency status)
+curl http://localhost:8000/readyz
+# → {"status":"ready","dependencies":{"circuit_breaker":"closed","failure_count":0}}
+
+# Metrics for monitoring
+curl http://localhost:8000/metrics
+# → {"requests_total":100,"cache_hits_total":60,"cache_hit_rate":0.6,...}
 ```
 
-## API Endpoints
-
-### Health Checks
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/healthz` | GET | Kubernetes liveness probe |
-| `/readyz` | GET | Kubernetes readiness probe with dependency status |
-| `/metrics` | GET | JSON metrics for monitoring |
-
-### Webhook
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/webhook` | POST | Vapi webhook handler for delivery queries |
-
-### Webhook Payload Format
+### The Main Event — Vapi Webhook
 
 ```json
+POST /webhook
+
 {
   "message": {
-    "content": "What's the status of my package?",
+    "content": "Where's my package ABC123?",
     "toolCalls": [
       {
         "function": {
           "name": "track_delivery",
-          "arguments": "{\"trackingId\": \"TRK123456789\"}"
+          "arguments": "{\"trackingId\": \"ABC123\"}"
         }
       }
     ]
@@ -110,123 +114,223 @@ Your Sanity dataset should include a `delivery` document type with:
 }
 ```
 
-## Architecture
+Response:
 
-```
-                        VOICE CALLER
-                              |
-                              v
-                      +-------------+
-                      |   Vapi     |  (speech-to-text, text-to-speech)
-                      |   Platform  |
-                      +------+------+
-                             |
-                             | HTTPS POST /webhook
-                             v
-                     +----------------+
-                     |   FastAPI     |  (webhook handler)
-                     |   Server      |
-                     +------+-------+
-                            |
-          +------------------+------------------+
-          |                  |                  |
-          v                  v                  v
-   +------------+     +------------+     +------------+
-   |    Cache   |     |  Metrics  |     |   Logger   |
-   | TTL 60s   |     |            |     |            |
-   +------+-----+     +------+-----+     +------+-----+
-          |                  |                  |
-          +------------------+------------------+
-                            |
-                            v
-                    +----------------+
-                    |    Sanity     |
-                    |    CMS API    |
-                    +----------------+
+```json
+{
+  "status": "success",
+  "message": "Your package ABC123 is in transit.",
+  "delivery_details": {
+    "tracking_number": "ABC123",
+    "status": "in_transit",
+    "estimated_delivery": "2024-01-16T17:00:00Z"
+  }
+}
 ```
 
-## Project Structure
+---
+
+## 🏗️ Under the Hood
+
+```
+                    📞 CALLER
+                        │
+                        ▼
+                ┌───────────────┐
+                │     VAPI      │  ← Speech → Text, Text → Speech
+                │   (The Voice)  │
+                └───────┬───────┘
+                        │
+                        │ POST /webhook 📩
+                        ▼
+                ┌───────────────┐
+                │  CAPTAIN CARGO │  ← FastAPI webhook handler
+                │   (The Brain) │
+                └───────┬───────┘
+                        │
+           ┌────────────┼────────────┐
+           │            │            │
+           ▼            ▼            ▼
+    ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │   🗄️     │  │   📊     │  │   📝     │
+    │  Cache   │  │ Metrics  │  │  Logger  │
+    │ (60s TTL)│  │          │  │          │
+    └────┬─────┘  └────┬─────┘  └────┬─────┘
+         │              │              │
+         └──────────────┼──────────────┘
+                        │
+                        ▼
+                ┌───────────────┐
+                │    SANITY     │  ← Your delivery data
+                │     CMS       │
+                └───────────────┘
+```
+
+---
+
+## 🧪 Testing (Because We Care)
+
+```bash
+# Run all 75 tests
+pytest tests/ -v
+
+# 75 passed in 3.67s 🎉
+```
+
+### Test Coverage
+
+| Category | What It Tests |
+|----------|---------------|
+| 🧱 Unit | Individual functions and classes |
+| 📝 Contract | Pydantic model validation |
+| 🔗 Integration | Full request/response cycles |
+
+---
+
+## 🎭 Evaluation Harness
+
+Think of this as a "simulated caller" that runs through dozens of scenarios and scores Captain Cargo:
+
+```bash
+python scripts/eval_replay.py \
+  --input eval/cases.jsonl \
+  --server http://localhost:8000 \
+  --report eval/report.md
+```
+
+Sample output:
+
+```
+Total Cases: 50 | Passed: 47 | Accuracy: 94%
+Avg Latency: 127ms | P95 Latency: 312ms
+```
+
+Check out [eval/report.md](eval/report.md) for a real example.
+
+---
+
+## 🎬 Demo Video
+
+**Watch Captain Cargo in action →** [Demo Video](https://your-demo-video-url)
+
+Shows: User calls → Agent asks tracking ID → Tool call → Status response → Fallback when backend's down
+
+---
+
+## 🗣️ The Conversation Flow
+
+### Happy Path 🦄
+
+```
+📞 Caller: "Where's my package?"
+
+🤖 Vapi (STT): "Where's my package?"
+🤖 Vapi (NLU): Intent: track_delivery
+
+🤖 Vapi → Captain Cargo: POST /webhook {trackingId: "ABC123"}
+
+📦 Captain Cargo → Sanity: "Give me ABC123"
+📦 Sanity → Captain Cargo: {status: "in_transit", ...}
+
+🤖 Captain Cargo → Vapi: {message: "Your package is in transit!"}
+
+🤖 Vapi (TTS): "Your package ABC123 is in transit!"
+📞 Caller: "Oh great, thanks!"
+```
+
+### When Things Go Wrong 😬
+
+```
+📞 Caller: "Where's TRK999?"
+
+🤖 Vapi → Captain Cargo: POST /webhook {trackingId: "TRK999"}
+
+⚡ Captain Cargo → Sanity: (circuit breaker OPEN - Sanity is down)
+
+🤖 Captain Cargo → Vapi: {status: "fallback", message: "Having trouble accessing latest data..."}
+
+🤖 Vapi (TTS): "I'm having trouble accessing the latest data. Please try again in a moment."
+📞 Caller: "Okay, thanks anyway."
+```
+
+---
+
+## 🎛️ Vapi Provider Configuration
+
+Captain Cargo is **provider-agnostic**. Your webhook doesn't care about voice stuff — Vapi handles all that.
+
+### Speech-to-Text (STT) — "What did they say?"
+
+| Provider | When To Use | Setup |
+|----------|-------------|-------|
+| **Deepgram** | Fast & accurate | Vapi Dashboard → Add Deepgram Key |
+| **AssemblyAI** | Good streaming | Vapi Dashboard → Add AssemblyAI Key |
+| **OpenAI Whisper** | Highest accuracy | Vapi Dashboard → Add OpenAI Key |
+
+### Text-to-Speech (TTS) — "What should I say?"
+
+| Provider | When To Use | Setup |
+|----------|-------------|-------|
+| **ElevenLabs** | Natural, emotional voices | Vapi Dashboard → Add ElevenLabs Key |
+| **OpenAI** | Fast, decent quality | Vapi Dashboard → Add OpenAI Key |
+| **Azure** | Enterprise needs | Vapi Dashboard → Add Azure Key |
+
+### Want to Switch Providers?
+
+1. Go to Vapi Dashboard
+2. Pick your provider
+3. Enter API key
+4. **That's it.** Captain Cargo doesn't need to know. 😎
+
+---
+
+## 🏢 Project Structure
 
 ```
 captain-cargo/
-├── server.py                 # FastAPI application entry point
-├── requirements.txt         # Python dependencies
-├── .env.example            # Environment template
-├── AGENTS.md               # AI agent guidelines
-├── README.md               # This file
-├── specs/                  # Feature specifications
+├── server.py                 # FastAPI entry point 🚪
+├── requirements.txt          # Python packages 📦
+├── .env.example              # Environment template 📝
+├── README.md                 # You are here 👋
+├── specs/                    # Master plans 🗺️
 │   └── 001-voice-agent-prod/
-│       ├── spec.md         # Feature specification
-│       ├── plan.md         # Technical plan
-│       ├── tasks.md        # Task breakdown
-│       └── checklists/     # Quality checklists
-├── models/                  # Pydantic models
-│   ├── webhook.py          # Webhook payload models
-│   └── delivery.py         # Delivery entity models
-├── services/                # Business logic
-│   ├── cache.py            # TTL cache with stats
-│   ├── sanity_client.py    # Sanity CMS client with retry/circuit breaker
-│   └── response_builder.py  # Hallucination-safe response builder
-├── middleware/              # HTTP middleware
-│   ├── correlation.py      # Correlation ID propagation
-│   └── validation.py       # Request validation
-├── utils/                   # Utilities
-│   ├── config.py           # Environment validation
-│   ├── logger.py           # Structured JSON logging
-│   └── normalization.py    # Tracking ID normalization
-├── endpoints/               # API endpoints
-│   ├── health.py           # Health check endpoints
-│   └── metrics.py          # Metrics endpoint
-├── scripts/                 # Utility scripts
+├── models/                   # Pydantic models 🧱
+│   ├── webhook.py           # Webhook payload shapes
+│   └── delivery.py          # Delivery entity shapes
+├── services/                 # Business logic 🧠
+│   ├── cache.py             # 60s TTL cache
+│   ├── sanity_client.py     # Sanity API + circuit breaker
+│   └── response_builder.py   # Hallucination-safe responses
+├── middleware/               # HTTP middleware 🍵
+│   ├── correlation.py       # Correlation IDs
+│   └── validation.py        # Request validation
+├── utils/                    # Utilities 🛠️
+│   ├── config.py            # Environment validation
+│   ├── logger.py            # JSON structured logs
+│   └── normalization.py     # Tracking ID cleaning
+├── endpoints/               # API endpoints 🔌
+│   ├── health.py            # /healthz, /readyz
+│   └── metrics.py           # /metrics
+├── scripts/                  # Tools 🔧
 │   └── eval_replay.py      # Evaluation harness
-└── tests/                   # Test suite
-    ├── unit/               # Unit tests
-    ├── contract/           # Contract tests
-    └── integration/        # Integration tests
+└── tests/                    # 75 tests passing ✅
+    ├── unit/
+    ├── contract/
+    └── integration/
 ```
 
-## Testing
+---
+
+## 🚀 Deployment
+
+### Docker (One Command)
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run with coverage
-pytest --cov=. tests/
-
-# Run specific test file
-pytest tests/unit/test_normalization.py -v
-
-# Run specific test
-pytest tests/unit/test_cache.py::TestDeliveryCache::test_ttl_expiration -v
-```
-
-### Test Categories
-
-- **Unit Tests**: Test individual functions and classes
-- **Contract Tests**: Test Pydantic model validation
-- **Integration Tests**: Test full request/response cycles
-
-### Test Results
-
-```
-======================== 75 passed, 1 warning in 3.67s ========================
-```
-
-## Production Deployment
-
-### Docker
-
-```bash
-# Build image
-docker build -t captain-cargo-agent .
-
-# Run container
+docker build -t captain-cargo .
 docker run -p 8000:8000 \
   -e SANITY_PROJECT_ID=xxx \
-  -e SANITY_DATASET=production \
   -e SANITY_API_TOKEN=xxx \
-  captain-cargo-agent
+  captain-cargo
 ```
 
 ### Kubernetes
@@ -238,190 +342,30 @@ metadata:
   name: captain-cargo
 spec:
   replicas: 3
-  template:
-    spec:
-      containers:
-      - name: captain-cargo
-        image: captain-cargo-agent
-        ports:
-        - containerPort: 8000
-        env:
-        - name: SANITY_PROJECT_ID
-          valueFrom:
-            secretKeyRef:
-              name: sanity-credentials
-              key: project-id
-        - name: SANITY_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: sanity-credentials
-              key: api-token
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8000
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8000
-```
-
-## Evaluation Harness
-
-Replay voice interactions and score accuracy:
-
-```bash
-python scripts/eval_replay.py \
-  --input eval/cases.jsonl \
-  --server http://localhost:8000 \
-  --report eval/report.md \
-  --format markdown
-```
-
-### Cases File Format (JSONL)
-
-```jsonl
-{"timestamp":"2024-01-15T10:00:00Z","correlation_id":"abc123","transcript":"Where is my package?","tool_calls":[{"function":{"name":"track_delivery","arguments":{"tracking_id":"ABC123"}}}],"expected_status":"success"}
-{"timestamp":"2024-01-15T10:05:00Z","correlation_id":"def456","transcript":"Check status for XYZ789","tool_calls":[{"function":{"name":"track_delivery","arguments":{"tracking_id":"XYZ789"}}}],"expected_status":"not_found"}
-```
-
-## Key Features
-
-### Reliability Patterns
-
-- **Circuit Breaker**: Prevents cascade failures during Sanity outages
-- **Retry Logic**: Exponential backoff (3 attempts, 100ms-400ms)
-- **TTL Cache**: 60-second cache with LRU eviction
-- **Timeout Enforcement**: 800ms P95 latency target
-
-### Observability
-
-- **Correlation IDs**: End-to-end request tracing
-- **Structured Logging**: JSON logs with correlation IDs
-- **Metrics**: Request counts, cache hits/misses, latency percentiles
-- **Health Checks**: Liveness, readiness, and dependency status
-
-### Safety
-
-- **Hallucination-Safe**: Responses contain only verified backend data
-- **Input Validation**: Pydantic-validated webhook payloads
-- **Error Handling**: Graceful degradation with fallback responses
-
-## Contributing
-
-See [AGENTS.md](AGENTS.md) for AI agent guidelines.
-
----
-
-## Demo & Call Flow
-
-### Watch the Demo
-
-**[Demo Video →](https://www.youtube.com/watch?v=dQw4w9WgXcQ)** (60-90s)
-
-Shows: User calls → Agent asks for tracking ID → Tool call → Status response → Backend-down fallback
-
-### Call Flow Diagram
-
-```
-CALLER                          VAPI                        CAPTAIN CARGO                   SANITY
-  │                               │                              │                           │
-  │── Phone call ────────────────>│                              │                           │
-  │                               │                              │                           │
-  │                               │── STT: "Where's my package?" │                           │
-  │                               │                              │                           │
-  │                               │── NLU Intent: track_delivery │                           │
-  │                               │                              │                           │
-  │<── "Sure, what's your tracking number?" ──────────────────────│                           │
-  │                               │                              │                           │
-  │── "ABC123XYZ" ──────────────>│                              │                           │
-  │                               │                              │                           │
-  │                               │── POST /webhook              │                           │
-  │                               │  {trackingId: "ABC123XYZ"}   │                           │
-  │                               │──────────────────────────────>│                           │
-  │                               │                              │                           │
-  │                               │                              │── GROQ Query ────────────>│
-  │                               │                              │                           │
-  │                               │                              │<── Delivery Data ─────────│
-  │                               │                              │                           │
-  │                               │<── {status: "in_transit", ...}───────────────────────────
-  │                               │                              │                           │
-  │<── "Your package ABC123XYZ is in transit..." ─────────────────│                           │
-  │                               │                              │                           │
-  │── "Thanks!" ────────────────>│                              │                           │
-  │                               │                              │                           │
-```
-
-### Fallback Flow (Backend Down)
-
-```
-CALLER                          VAPI                        CAPTAIN CARGO                   SANITY
-  │                               │                              │                           │
-  │── "Where's TRK999?" ────────>│                              │                           │
-  │                               │                              │                           │
-  │                               │── POST /webhook              │                           │
-  │                               │                              │                           │
-  │                               │                              │── Circuit Breaker OPEN ───>│
-  │                               │                              │     (Sanity unreachable)  │
-  │                               │                              │                           │
-  │<── "Having trouble accessing latest data..." ─────────────────│                           │
-  │                               │                              │                           │
+  containers:
+  - name: captain-cargo
+    image: captain-cargo-agent
+    ports: [8000]
+    env:
+    - name: SANITY_PROJECT_ID
+      valueFrom:
+        secretKeyRef:
+          name: sanity-creds
+          key: project-id
 ```
 
 ---
 
-## Vapi Provider Configuration
+## 🧑‍💻 Contributing
 
-Captain Cargo is provider-agnostic. Your webhook handles the business logic while Vapi manages voice/STT/TTS providers. Here's how to configure providers in Vapi:
+See [AGENTS.md](AGENTS.md) for guidelines. We're friendly! 🙌
 
-### Speech-to-Text (STT) Providers
+---
 
-| Provider | Use Case | Configuration |
-|----------|----------|---------------|
-| **Deepgram** | Low latency, high accuracy | Vapi Dashboard → Speech → Deepgram API Key |
-| **AssemblyAI** | Good accuracy, streaming | Vapi Dashboard → Speech → AssemblyAI API Key |
-| **OpenAI Whisper** | High accuracy, slower | Vapi Dashboard → Speech → OpenAI API Key |
+## 📄 License
 
-### Text-to-Speech (TTS) Providers
+MIT. Go forth and ship! 🚢
 
-| Provider | Use Case | Configuration |
-|----------|----------|---------------|
-| **ElevenLabs** | Natural voices, emotional | Vapi Dashboard → Voice → ElevenLabs API Key |
-| **OpenAI** | Fast, decent quality | Vapi Dashboard → Voice → OpenAI API Key |
-| **Azure** | Enterprise, multiple voices | Vapi Dashboard → Voice → Azure API Key |
+---
 
-### Example: Switching from Deepgram to AssemblyAI
-
-1. Vapi Dashboard → Speech
-2. Select "AssemblyAI" instead of "Deepgram"
-3. Enter AssemblyAI API Key
-4. **No changes needed** to Captain Cargo webhook
-
-### Example: Switching from ElevenLabs to OpenAI TTS
-
-1. Vapi Dashboard → Voice
-2. Select "OpenAI" instead of "ElevenLabs"
-3. Enter OpenAI API Key
-4. **No changes needed** to Captain Cargo webhook
-
-### Why This Architecture?
-
-- **Stable Backend**: Your webhook doesn't change when voice providers change
-- **Vendor Lock-In Prevention**: Easy to switch STT/TTS providers
-- **Cost Optimization**: Switch providers based on pricing/performance
-- **Quality Tuning**: A/B test different providers independently
-
-### Backend Stability Guarantees
-
-Captain Cargo provides:
-
-1. **Circuit Breaker**: Prevents cascade failures during provider outages
-2. **Retry Logic**: 3 attempts with exponential backoff
-3. **Graceful Fallback**: Cached responses when Sanity is slow
-4. **Structured Logging**: Correlation IDs for debugging
-
-These guarantees remain **independent** of Vapi provider choices.
-
-## License
-
-MIT
+**Captain Cargo** — Because your customers deserve to know where their stuff is. 📦✨
